@@ -97,20 +97,35 @@ function Ensure-Admin {
 
   Write-Step "Restarting script as Administrator..."
   $scriptPath = $MyInvocation.MyCommand.Definition
-  $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`"")
-  if ($PSBoundParameters.ContainsKey('Mode')) { $args += @('-Mode', $Mode) }
-  if ($Quick)           { $args += '-Quick' }
-  if ($IncludeAllVHDX)  { $args += '-IncludeAllVHDX' }
-  if ($MaxScanThreads)  { $args += @('-MaxScanThreads', $MaxScanThreads) }
-  if ($ListOnly)        { $args += '-ListOnly' }
-  if ($Yes)             { $args += '-Yes' }
-  if ($Drives)          { $args += @('-Drives'); $args += ($Drives | ForEach-Object { $_ }) }
-  if ($NoRelaunch)      { $args += '-NoRelaunch' }
-  if ($LogPath)         { $args += @('-LogPath', "`"$LogPath`"") }
-  if ($VerbosePreference -eq 'Continue') { $args += '-Verbose' }
-  if ($WhatIfPreference) { $args += '-WhatIf' }
-  Start-Process powershell -Verb RunAs -ArgumentList ($args -join ' ')
+  $relaunchArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`"")
+  if ($PSBoundParameters.ContainsKey('Mode')) { $relaunchArgs += @('-Mode', $Mode) }
+  if ($Quick)           { $relaunchArgs += '-Quick' }
+  if ($IncludeAllVHDX)  { $relaunchArgs += '-IncludeAllVHDX' }
+  if ($MaxScanThreads)  { $relaunchArgs += @('-MaxScanThreads', $MaxScanThreads) }
+  if ($ListOnly)        { $relaunchArgs += '-ListOnly' }
+  if ($Yes)             { $relaunchArgs += '-Yes' }
+  if ($Drives)          { $relaunchArgs += @('-Drives'); $relaunchArgs += ($Drives | ForEach-Object { $_ }) }
+  if ($NoRelaunch)      { $relaunchArgs += '-NoRelaunch' }
+  if ($LogPath)         { $relaunchArgs += @('-LogPath', "`"$LogPath`"") }
+  if ($VerbosePreference -eq 'Continue') { $relaunchArgs += '-Verbose' }
+  if ($WhatIfPreference) { $relaunchArgs += '-WhatIf' }
+  Start-Process powershell -Verb RunAs -ArgumentList ($relaunchArgs -join ' ')
   exit
+}
+
+function Invoke-WSLShutdown {
+  [CmdletBinding()]
+  param()
+  $result = [PSCustomObject]@{ Status = 'Success'; Message = ''; Details = @() }
+  try {
+    $wslOutput = & wsl.exe --shutdown 2>&1
+    $result.Message = 'WSL shut down successfully.'
+    $result.Details = @($wslOutput | Where-Object { $_ })
+  } catch {
+    $result.Status  = 'Failure'
+    $result.Message = "WSL shutdown failed: $($_.Exception.Message)"
+  }
+  return $result
 }
 
 function Get-FileSystemRoots {
@@ -131,37 +146,6 @@ function Get-FileSystemRoots {
     }
   } catch {}
   $roots | Where-Object { $_ -and (Test-Path $_) } | Sort-Object -Unique
-}
-
-# ---- Native per-drive DIR sweep (fast & robust) ----
-function Invoke-DirSweep {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory)][string]$Root,        # e.g. "C:\"
-    [Parameter(Mandatory)][string[]]$Patterns   # e.g. '*.vhdx' or specific names
-  )
-  $patternCmds = $Patterns | ForEach-Object { 'dir /s /b /a:-d "' + (Join-Path $Root $_) + '" 2>nul' }
-  $cmd = 'cmd.exe /d /c ' + ($patternCmds -join ' & ')
-  Write-Verbose "[dir] $cmd"
-
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = 'cmd.exe'
-  $psi.Arguments = $cmd.Substring(10)
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError  = $true
-  $psi.UseShellExecute        = $false
-  $psi.CreateNoWindow         = $true
-
-  $p = New-Object System.Diagnostics.Process
-  $p.StartInfo = $psi
-  $null = $p.Start()
-  $p.WaitForExit()
-
-  $out = $p.StandardOutput.ReadToEnd()
-  $p.Dispose()
-
-  if (-not $out) { return @() }
-  ($out -split "(`r`n|`n|`r)") | Where-Object { $_ } | Sort-Object -Unique
 }
 
 # ---- Parallelize per-drive sweeps w/ progress ----
@@ -306,7 +290,8 @@ Write-Verbose "Elevated : $(Test-IsAdmin)"
 Ensure-Admin -NoRelaunch:$NoRelaunch
 
 Write-Step "Stopping WSL (releases VHDX locks)..."
-try { wsl.exe --shutdown | Out-Null; Write-Ok "WSL shut down." } catch { Write-Err "WSL shutdown failed: $($_.Exception.Message)" }
+$wslResult = Invoke-WSLShutdown
+if ($wslResult.Status -eq 'Success') { Write-Ok $wslResult.Message } else { Write-Err $wslResult.Message }
 Write-Info "Quit Docker Desktop from the tray for best results."
 
 if (-not (Get-Command Optimize-VHD -ErrorAction SilentlyContinue)) {
@@ -362,16 +347,17 @@ if ($ListOnly) {
 if (-not $Yes) {
   $count = $targets.Count
   $prompt = "Proceed to optimize $count file(s)? [Y]es/[N]o/[S]how details"
-  while ($true) {
+  $confirmed = $false
+  while (-not $confirmed) {
     $resp = Read-Host $prompt
     switch ($resp.ToUpperInvariant()) {
-      'Y' { break }
-      'YES' { break }
-      'S' { Write-Host ""; $targets | ForEach-Object { Write-Host "  - $($_.FullName)"; }; Write-Host ""; continue }
-      'SHOW' { Write-Host ""; $targets | ForEach-Object { Write-Host "  - $($_.FullName)"; }; Write-Host ""; continue }
-      'N' { Write-Info "Operation cancelled by user."; if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }; return }
-      'NO' { Write-Info "Operation cancelled by user."; if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }; return }
-      default { Write-Info "Please type Y, N, or S."; continue }
+      'Y'    { $confirmed = $true }
+      'YES'  { $confirmed = $true }
+      'S'    { Write-Host ""; $targets | ForEach-Object { Write-Host "  - $($_.FullName)" }; Write-Host "" }
+      'SHOW' { Write-Host ""; $targets | ForEach-Object { Write-Host "  - $($_.FullName)" }; Write-Host "" }
+      'N'    { Write-Info "Operation cancelled by user."; if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }; return }
+      'NO'   { Write-Info "Operation cancelled by user."; if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }; return }
+      default { Write-Info "Please type Y, N, or S." }
     }
   }
 }
@@ -381,6 +367,7 @@ Write-Info "This may take a while depending on size/fragmentation."
 
 $success = 0; $fail = 0; $failed = @()
 $total = $targets.Count; $i = 0
+$totalBytesBefore = 0L; $totalBytesAfter = 0L
 
 foreach ($vhd in $targets) {
   $i++; $pct = [int](($i / $total) * 100)
@@ -391,10 +378,20 @@ foreach ($vhd in $targets) {
   Write-Host "    Path: $($vhd.FullName)" -ForegroundColor DarkGray
 
   try {
+    $sizeBefore = (Get-Item -LiteralPath $vhd.FullName -ErrorAction SilentlyContinue).Length
     if ($PSCmdlet.ShouldProcess($vhd.FullName, "Optimize-VHD -Mode $Mode")) {
       Optimize-VHD -Path $vhd.FullName -Mode $Mode
     }
-    Write-Ok "Optimized."
+    $sizeAfter = (Get-Item -LiteralPath $vhd.FullName -ErrorAction SilentlyContinue).Length
+    if ($null -ne $sizeBefore -and $null -ne $sizeAfter) {
+      $totalBytesBefore += $sizeBefore
+      $totalBytesAfter  += $sizeAfter
+      $saved = $sizeBefore - $sizeAfter
+      $savedMB = [math]::Round($saved / 1MB, 1)
+      Write-Ok ("Optimized. Saved {0:N1} MB ({1:N0} → {2:N0} bytes)" -f $savedMB, $sizeBefore, $sizeAfter)
+    } else {
+      Write-Ok "Optimized."
+    }
     $success++
   } catch {
     Write-Err "Failed."
@@ -409,6 +406,12 @@ $sw.Stop()
 Write-Host ""
 Write-Title "Summary"
 Write-Ok "Optimized : $success"
+if ($success -gt 0 -and $totalBytesBefore -gt 0) {
+  $totalSavedMB = [math]::Round(($totalBytesBefore - $totalBytesAfter) / 1MB, 1)
+  $totalBeforeGB = [math]::Round($totalBytesBefore / 1GB, 2)
+  $totalAfterGB  = [math]::Round($totalBytesAfter  / 1GB, 2)
+  Write-Ok ("Reclaimed : {0:N1} MB  ({1:N2} GB → {2:N2} GB)" -f $totalSavedMB, $totalBeforeGB, $totalAfterGB)
+}
 if ($fail -gt 0) {
   Write-Err "Failed    : $fail"
   Write-Host "Failed items:" -ForegroundColor Red
