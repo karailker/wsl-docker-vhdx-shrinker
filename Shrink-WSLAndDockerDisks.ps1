@@ -328,7 +328,7 @@ if (Test-WSLRunning) {
     }
   }
 
-  if (-not $retried -and Test-WSLRunning) {
+  if (-not $retried -and (Test-WSLRunning)) {
     Write-Warn "Continuing anyway - some files may fail to optimize."
     Write-Warn "To fix: run 'wsl --shutdown', wait a moment, then re-run this script."
   }
