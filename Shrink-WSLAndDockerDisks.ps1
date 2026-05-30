@@ -432,7 +432,7 @@ foreach ($vhd in $targets) {
       $totalBytesAfter  += $sizeAfter
       $saved = $sizeBefore - $sizeAfter
       $savedMB = [math]::Round($saved / 1MB, 1)
-      Write-Ok ("Optimized. Saved {0:N1} MB ({1:N0} → {2:N0} bytes)" -f $savedMB, $sizeBefore, $sizeAfter)
+      Write-Ok ("Optimized. Saved {0:N1} MB ({1:N0} -> {2:N0} bytes)" -f $savedMB, $sizeBefore, $sizeAfter)
     } else {
       Write-Ok "Optimized."
     }
@@ -454,7 +454,7 @@ if ($success -gt 0 -and $totalBytesBefore -gt 0) {
   $totalSavedMB = [math]::Round(($totalBytesBefore - $totalBytesAfter) / 1MB, 1)
   $totalBeforeGB = [math]::Round($totalBytesBefore / 1GB, 2)
   $totalAfterGB  = [math]::Round($totalBytesAfter  / 1GB, 2)
-  Write-Ok ("Reclaimed : {0:N1} MB  ({1:N2} GB → {2:N2} GB)" -f $totalSavedMB, $totalBeforeGB, $totalAfterGB)
+  Write-Ok ("Reclaimed : {0:N1} MB  ({1:N2} GB -> {2:N2} GB)" -f $totalSavedMB, $totalBeforeGB, $totalAfterGB)
 }
 if ($fail -gt 0) {
   Write-Err "Failed    : $fail"
