@@ -61,8 +61,8 @@ DISM /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All
 
 ## How It Works
 
-1. **Elevation check** — auto-relaunches as Administrator if needed
-2. **WSL shutdown** — runs `wsl --shutdown` to release VHDX file locks
+1. **Elevation check** — warns if not running as Administrator and auto-relaunches if needed
+2. **WSL shutdown** — runs `wsl --shutdown` to release VHDX file locks; warns if WSL is still running after shutdown
 3. **Parallel drive scan** — uses native `dir /s /b` commands across drives concurrently
 4. **Filtering** — keeps only `ext4.vhdx`, `docker_data.vhdx`, `disk.vhdx` (or all `*.vhdx` with `-IncludeAllVHDX`)
 5. **Confirmation** — displays found files and prompts unless `-Yes` is set
@@ -85,6 +85,8 @@ Tests run without Administrator rights and without WSL or Hyper-V installed. All
 
 ## Important Notes
 
+- **Run as Administrator** — the script auto-elevates if needed, but you will see a `[WARN]` message and a UAC prompt. For a silent run (e.g. scheduled tasks), launch PowerShell as Administrator before running the script.
+- **WSL must be stopped** — the script runs `wsl --shutdown` automatically. If WSL is still running afterwards (e.g. it restarted quickly), a `[WARN]` is printed and the script continues — but affected VHDX files may fail with a "file in use" error. Run `wsl --shutdown` manually and wait a moment before retrying.
 - **Close Docker Desktop** from the system tray before running for best results. WSL is shut down automatically; Docker Desktop is not.
 - **Disk space** — optimization may temporarily require additional free space on the target drive.
 - **After completion** — restart WSL with `wsl` and launch Docker Desktop normally.
