@@ -24,6 +24,9 @@ Goal: eliminate silent failures, enforce structured return values.
 | 1.8 | `Invoke-OptimizeVHD` structured result | **Planned** | Same pattern as `Invoke-WSLShutdown`; injectable `-OptimizeCommand` for testing |
 | 1.9 | Docker Desktop graceful shutdown | **Planned** | Detect if Docker Desktop is running; instruct user or attempt graceful stop |
 | 1.10 | Dependency check function | **Planned** | Extract `Optimize-VHD` availability check into `Test-HyperVTools` returning structured result |
+| 1.11 | WSL still-running check + warn | **Done** | `Test-WSLRunning` checks `wsl --list --running` after shutdown; prints `[WARN]` if any distro still active |
+| 1.12 | Admin pre-flight warning | **Done** | `Ensure-Admin` prints `[WARN]` before relaunching elevated; `Write-Warn` helper added |
+| 1.13 | Fix `Optimize-VHD` non-terminating error | **Done** | Added `-ErrorAction Stop`; failures now correctly counted in `$fail` instead of `$success` |
 
 ---
 
@@ -69,6 +72,9 @@ Goal: improve developer experience, logging, and code organisation.
 | Before/after size reporting | phase-I |
 | Pester 5 test suite (35 tests) | phase-I |
 | Bug fixes: break loop, $args shadow, dead code | phase-I |
+| WSL still-running check (`Test-WSLRunning`) | phase-I |
+| Admin pre-flight warning (`Write-Warn` in `Ensure-Admin`) | phase-I |
+| Fix `Optimize-VHD` non-terminating error (`-ErrorAction Stop`) | phase-I |
 
 ---
 

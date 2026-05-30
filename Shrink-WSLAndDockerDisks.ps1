@@ -82,6 +82,7 @@ function Write-Info { param([string]$Text) Write-Host "[*] $Text" -ForegroundCol
 function Write-Ok   { param([string]$Text) Write-Host "[OK] $Text" -ForegroundColor Green }
 function Write-Err  { param([string]$Text) Write-Host "[!!] $Text" -ForegroundColor Red }
 function Write-Step { param([string]$Text) Write-Host ">> $Text" -ForegroundColor Yellow }
+function Write-Warn { param([string]$Text) Write-Host "[WARN] $Text" -ForegroundColor Yellow }
 #endregion
 
 function Test-IsAdmin {
@@ -95,7 +96,8 @@ function Ensure-Admin {
   if (Test-IsAdmin) { return }
   if ($NoRelaunch) { throw "This script must be run as Administrator (or omit -NoRelaunch)." }
 
-  Write-Step "Restarting script as Administrator..."
+  Write-Warn "PowerShell is NOT running as Administrator."
+  Write-Warn "Optimize-VHD requires elevated privileges. Relaunching as Administrator..."
   $scriptPath = $MyInvocation.MyCommand.Definition
   $relaunchArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`"")
   if ($PSBoundParameters.ContainsKey('Mode')) { $relaunchArgs += @('-Mode', $Mode) }
@@ -111,6 +113,15 @@ function Ensure-Admin {
   if ($WhatIfPreference) { $relaunchArgs += '-WhatIf' }
   Start-Process powershell -Verb RunAs -ArgumentList ($relaunchArgs -join ' ')
   exit
+}
+
+function Test-WSLRunning {
+  # wsl --list --running exits with output if any distro is running, silent if none
+  $out = & wsl.exe --list --running 2>&1
+  # Output is always present (header line at minimum); check for actual distro entries
+  $lines = @($out | Where-Object { $_ -and ($_ -notmatch '^\s*$') })
+  # First line is a header ("Windows Subsystem for Linux Distributions:" or similar)
+  return $lines.Count -gt 1
 }
 
 function Invoke-WSLShutdown {
@@ -295,6 +306,36 @@ Ensure-Admin -NoRelaunch:$NoRelaunch
 Write-Step "Stopping WSL (releases VHDX locks)..."
 $wslResult = Invoke-WSLShutdown
 if ($wslResult.Status -eq 'Success') { Write-Ok $wslResult.Message } else { Write-Err $wslResult.Message }
+
+if (Test-WSLRunning) {
+  Write-Warn "WSL is still running! VHDX files may still be locked."
+
+  # Offer to retry shutdown interactively (skip when -Yes or non-interactive)
+  $retried = $false
+  if (-not $Yes -and [Environment]::UserInteractive) {
+    $resp = Read-Host "[WARN] Attempt 'wsl --shutdown' again and continue? [Y]es/[N]o (default: N)"
+    if ($resp -match '^[Yy]') {
+      Write-Step "Retrying WSL shutdown..."
+      $wslResult2 = Invoke-WSLShutdown
+      if ($wslResult2.Status -eq 'Success') { Write-Ok $wslResult2.Message } else { Write-Err $wslResult2.Message }
+      Start-Sleep -Seconds 3
+      if (Test-WSLRunning) {
+        Write-Warn "WSL is STILL running after retry. Some files may fail to optimize."
+      } else {
+        Write-Ok "WSL is now stopped."
+        $retried = $true
+      }
+    }
+  }
+
+  if (-not $retried -and Test-WSLRunning) {
+    Write-Warn "Continuing anyway — some files may fail to optimize."
+    Write-Warn "To fix: run 'wsl --shutdown', wait a moment, then re-run this script."
+  }
+} else {
+  Write-Ok "WSL is stopped. VHDX locks released."
+}
+
 Write-Info "Quit Docker Desktop from the tray for best results."
 
 if (-not (Get-Command Optimize-VHD -ErrorAction SilentlyContinue)) {
@@ -383,7 +424,7 @@ foreach ($vhd in $targets) {
   try {
     $sizeBefore = (Get-Item -LiteralPath $vhd.FullName -ErrorAction SilentlyContinue).Length
     if ($PSCmdlet.ShouldProcess($vhd.FullName, "Optimize-VHD -Mode $Mode")) {
-      Optimize-VHD -Path $vhd.FullName -Mode $Mode
+      Optimize-VHD -Path $vhd.FullName -Mode $Mode -ErrorAction Stop
     }
     $sizeAfter = (Get-Item -LiteralPath $vhd.FullName -ErrorAction SilentlyContinue).Length
     if ($null -ne $sizeBefore -and $null -ne $sizeAfter) {

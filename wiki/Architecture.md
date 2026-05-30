@@ -9,17 +9,24 @@ The script is a single PowerShell file (`Shrink-WSLAndDockerDisks.ps1`) with a c
 ```
 Shrink-WSLAndDockerDisks.ps1
 |
-+-- UI helpers (Write-Title, Write-Info, Write-Ok, Write-Err, Write-Step)
++-- UI helpers (Write-Title, Write-Info, Write-Ok, Write-Err, Write-Step, Write-Warn)
 |     Pure output wrappers. No logic, no side effects.
+|     Write-Warn emits a yellow [WARN] prefix, used for non-fatal pre-flight issues.
 |
 +-- Test-IsAdmin
 |     Returns [bool]. Checks WindowsPrincipal for Administrator role.
 |
 +-- Ensure-Admin
 |     Calls Test-IsAdmin. If not elevated and -NoRelaunch not set,
-|     relaunches the script via Start-Process -Verb RunAs and exits.
+|     prints a [WARN] message, then relaunches the script via
+|     Start-Process -Verb RunAs and exits.
 |     Uses $relaunchArgs (not $args) to avoid clobbering PowerShell's
 |     automatic $args variable.
+|
++-- Test-WSLRunning
+|     Calls `wsl.exe --list --running` and checks whether any distro
+|     entries appear beyond the header line.
+|     Returns: [bool] -- $true if at least one distro is still running.
 |
 +-- Invoke-WSLShutdown
 |     Accepts an injectable -ShutdownCommand [scriptblock] parameter.
@@ -48,8 +55,8 @@ Shrink-WSLAndDockerDisks.ps1
         1. Handle deprecated -Quick switch
         2. Start transcript if -LogPath set
         3. Start stopwatch
-        4. Call Ensure-Admin
-        5. Call Invoke-WSLShutdown
+        4. Call Ensure-Admin (warns + relaunches if not elevated)
+        5. Call Invoke-WSLShutdown; call Test-WSLRunning and warn if still running
         6. Check Optimize-VHD availability
         7. Call Get-FileSystemRoots
         8. Call Invoke-ParallelDirSweeps

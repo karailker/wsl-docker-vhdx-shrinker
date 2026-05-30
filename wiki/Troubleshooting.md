@@ -1,5 +1,18 @@
 # Troubleshooting
 
+## "[WARN] PowerShell is NOT running as Administrator"
+
+**Cause:** The script was launched without Administrator privileges.
+
+The script will automatically relaunch itself elevated via a UAC prompt. If UAC is disabled or you are running in a non-interactive context (scheduled task, CI), launch PowerShell as Administrator before running the script to avoid the prompt.
+
+To suppress auto-elevation and fail explicitly instead, use `-NoRelaunch`:
+```powershell
+.\Shrink-WSLAndDockerDisks.ps1 -NoRelaunch
+```
+
+---
+
 ## "Optimize-VHD not found"
 
 **Cause:** Hyper-V Management Tools are not installed.
@@ -19,11 +32,21 @@ Restart if prompted. You do not need full Hyper-V virtualisation -- only the man
 
 **Cause:** WSL or Docker Desktop still has the VHDX file open.
 
+The script runs `wsl --shutdown` automatically and then verifies WSL has stopped. If you see:
+
+```
+[WARN] WSL is still running! VHDX files may still be locked.
+[WARN] Attempt 'wsl --shutdown' again and continue? [Y]es/[N]o (default: N)
+```
+
+you will be offered a chance to retry the shutdown in-place. Type `Y` to let the script retry and wait 3 seconds before proceeding. If you answer `N` (or are running with `-Yes`), the script continues and affected files may fail with a "file in use" error.
+
 **Fix:**
 1. Run `wsl --shutdown` in a terminal and wait a few seconds
-2. Quit Docker Desktop completely from the system tray (right-click the whale icon, Exit)
-3. Check Task Manager for any remaining `vmmem`, `wsl`, or Docker processes
-4. Re-run the script
+2. Confirm with `wsl --list --running` (should output only the header, no distro names)
+3. Quit Docker Desktop completely from the system tray (right-click the whale icon, Exit)
+4. Check Task Manager for any remaining `vmmem`, `wsl`, or Docker processes
+5. Re-run the script
 
 ---
 
