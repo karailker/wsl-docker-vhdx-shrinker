@@ -115,10 +115,13 @@ function Ensure-Admin {
 
 function Invoke-WSLShutdown {
   [CmdletBinding()]
-  param()
+  param(
+    # Injectable for testing: default invokes wsl.exe --shutdown.
+    [scriptblock]$ShutdownCommand = { & wsl.exe --shutdown 2>&1 }
+  )
   $result = [PSCustomObject]@{ Status = 'Success'; Message = ''; Details = @() }
   try {
-    $wslOutput = & wsl.exe --shutdown 2>&1
+    $wslOutput = & $ShutdownCommand
     $result.Message = 'WSL shut down successfully.'
     $result.Details = @($wslOutput | Where-Object { $_ })
   } catch {
