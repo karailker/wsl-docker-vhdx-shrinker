@@ -1,6 +1,6 @@
 # WSL and Docker VHDX Shrinker
 
-A PowerShell utility that finds and compacts VHDX disk images used by WSL (Windows Subsystem for Linux) and Docker Desktop. Virtual hard disk files grow as you add data but never shrink automatically — this script reclaims that wasted space.
+A PowerShell utility that finds and compacts VHDX disk images used by WSL (Windows Subsystem for Linux) and Docker Desktop. Virtual hard disk files grow as you add data but never shrink automatically — this script reclaims that wasted space by scanning your drives or shrinking a specific VHDX file directly.
 
 ## Requirements
 
@@ -19,6 +19,9 @@ DISM /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All
 ## Quick Start
 
 ```powershell
+# Shrink a specific VHDX file directly by path
+.\Shrink-WSLAndDockerDisks.ps1 -Path "C:\path\to\ext4.vhdx"
+
 # See what files would be found, without making changes
 .\Shrink-WSLAndDockerDisks.ps1 -ListOnly
 
@@ -33,6 +36,7 @@ DISM /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `-Path` | String | — | Path to a specific VHDX file (skips scanning drives). Alias: `-FilePath` |
 | `-Mode` | `Quick` \| `Full` | `Full` | Full reclaims more space; Quick is faster |
 | `-Drives` | `String[]` | all drives | Limit scan to specific drive letters, e.g. `C,D` |
 | `-IncludeAllVHDX` | Switch | off | Scan for any `*.vhdx`, not just WSL/Docker files |
@@ -46,6 +50,12 @@ DISM /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All
 ## Examples
 
 ```powershell
+# Shrink a single WSL disk directly without scanning drives
+.\Shrink-WSLAndDockerDisks.ps1 -Path "C:\Users\username\AppData\Local\Packages\CanonicalGroupLimited...\LocalState\ext4.vhdx"
+
+# Shrink a single file in Quick mode without prompting
+.\Shrink-WSLAndDockerDisks.ps1 -Path "D:\Docker\ext4.vhdx" -Mode Quick -Yes
+
 # Scan only C and D drives, quick mode, no prompt
 .\Shrink-WSLAndDockerDisks.ps1 -Mode Quick -Drives C,D -Yes
 
@@ -61,10 +71,10 @@ DISM /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All
 
 ## How It Works
 
-1. **Elevation check** — warns if not running as Administrator and auto-relaunches if needed
+1. **Elevation check** — warns if not running as Administrator and auto-relaunches if needed (preserving `-Path` and other arguments)
 2. **WSL shutdown** — runs `wsl --shutdown` to release VHDX file locks; warns if WSL is still running after shutdown
-3. **Parallel drive scan** — uses native `dir /s /b` commands across drives concurrently
-4. **Filtering** — keeps only `ext4.vhdx`, `docker_data.vhdx`, `disk.vhdx` (or all `*.vhdx` with `-IncludeAllVHDX`)
+3. **Target selection / Drive scan** — accepts a target file directly via `-Path`, or runs parallel native `dir /s /b` sweeps across drives concurrently
+4. **Filtering** — during drive scans, keeps only `ext4.vhdx`, `docker_data.vhdx`, `disk.vhdx` (or all `*.vhdx` with `-IncludeAllVHDX`)
 5. **Confirmation** — displays found files and prompts unless `-Yes` is set
 6. **Optimization** — runs `Optimize-VHD -Mode <Full|Quick>` on each file
 7. **Summary** — reports success/failure counts and total MB reclaimed
