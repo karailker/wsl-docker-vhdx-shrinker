@@ -21,6 +21,9 @@
 .PARAMETER Quick
   (Deprecated) alias of -Mode Quick.
 
+.PARAMETER Path
+  Path to a specific VHDX file to shrink (bypasses drive scanning). Alias: -FilePath.
+
 .PARAMETER Drives
   One or more drive letters (e.g., 'C','D','E'). If omitted, scan ALL filesystem drives.
 
@@ -43,6 +46,7 @@
   Start-Transcript to this path.
 
 .EXAMPLES
+  .\Shrink-WSLAndDockerDisks.ps1 -Path "C:\WSL\ext4.vhdx"
   .\Shrink-WSLAndDockerDisks.ps1 -Drives C,D -ListOnly -Verbose
   .\Shrink-WSLAndDockerDisks.ps1 -IncludeAllVHDX -Yes
   .\Shrink-WSLAndDockerDisks.ps1 -Mode Quick -MaxScanThreads 4
@@ -54,6 +58,9 @@ param(
   [string]$Mode = 'Full',
 
   [switch]$Quick,
+
+  [Alias('FilePath')]
+  [string]$Path,
 
   [string[]]$Drives,
 
@@ -102,6 +109,11 @@ function Ensure-Admin {
   $relaunchArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`"")
   if ($PSBoundParameters.ContainsKey('Mode')) { $relaunchArgs += @('-Mode', $Mode) }
   if ($Quick)           { $relaunchArgs += '-Quick' }
+  if ($Path) {
+    $fullPath = try { (Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue).Path } catch { $Path }
+    if (-not $fullPath) { $fullPath = $Path }
+    $relaunchArgs += @('-Path', "`"$fullPath`"")
+  }
   if ($IncludeAllVHDX)  { $relaunchArgs += '-IncludeAllVHDX' }
   if ($MaxScanThreads)  { $relaunchArgs += @('-MaxScanThreads', $MaxScanThreads) }
   if ($ListOnly)        { $relaunchArgs += '-ListOnly' }
@@ -346,35 +358,48 @@ if (-not (Get-Command Optimize-VHD -ErrorAction SilentlyContinue)) {
   return
 }
 
-Write-Step "Scanning filesystem drives..."
-$roots = Get-FileSystemRoots -OnlyDrives:$Drives
-if (-not $roots) {
-  Write-Err "No filesystem drives detected (or invalid -Drives selection)."
-  if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }
-  return
+if ($Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    Write-Err "Specified file does not exist or is not a file: $Path"
+    if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }
+    return
+  }
+  $resolvedItem = Get-Item -LiteralPath $Path
+  if ($resolvedItem.Extension -ne '.vhdx') {
+    Write-Warn "Specified file '$($resolvedItem.Name)' does not have a .vhdx extension."
+  }
+  $targets = @($resolvedItem)
+} else {
+  Write-Step "Scanning filesystem drives..."
+  $roots = Get-FileSystemRoots -OnlyDrives:$Drives
+  if (-not $roots) {
+    Write-Err "No filesystem drives detected (or invalid -Drives selection)."
+    if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }
+    return
+  }
+
+  [string[]]$scanPatterns = @('ext4.vhdx','docker_data.vhdx','disk.vhdx')
+  if ($IncludeAllVHDX) { $scanPatterns = @('*.vhdx') }
+
+  $throttle = if ($PSBoundParameters.ContainsKey('MaxScanThreads')) { [Math]::Max(1, $MaxScanThreads) } else { 0 }
+
+  $items = Invoke-ParallelDirSweeps -Roots $roots -Patterns $scanPatterns -Throttle $throttle
+
+  if (-not $items -or $items.Count -eq 0) {
+    Write-Err "No target VHDX files found."
+    Write-Info ("Searched drives {0} with patterns: {1}" -f ($roots -join ', '), ($scanPatterns -join ', '))
+    if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }
+    return
+  }
+
+  # If not IncludeAllVHDX, keep only known names (case-insensitive)
+  if (-not $IncludeAllVHDX) {
+    $nameSet = @('ext4.vhdx','docker_data.vhdx','disk.vhdx')
+    $items = $items | Where-Object { $nameSet -contains $_.Name.ToLowerInvariant() }
+  }
+
+  $targets = $items | Group-Object FullName | ForEach-Object { $_.Group[0] }
 }
-
-[string[]]$scanPatterns = @('ext4.vhdx','docker_data.vhdx','disk.vhdx')
-if ($IncludeAllVHDX) { $scanPatterns = @('*.vhdx') }
-
-$throttle = if ($PSBoundParameters.ContainsKey('MaxScanThreads')) { [Math]::Max(1, $MaxScanThreads) } else { 0 }
-
-$items = Invoke-ParallelDirSweeps -Roots $roots -Patterns $scanPatterns -Throttle $throttle
-
-if (-not $items -or $items.Count -eq 0) {
-  Write-Err "No target VHDX files found."
-  Write-Info ("Searched drives {0} with patterns: {1}" -f ($roots -join ', '), ($scanPatterns -join ', '))
-  if ($LogPath) { try { Stop-Transcript | Out-Null } catch {} }
-  return
-}
-
-# If not IncludeAllVHDX, keep only known names (case-insensitive)
-if (-not $IncludeAllVHDX) {
-  $nameSet = @('ext4.vhdx','docker_data.vhdx','disk.vhdx')
-  $items = $items | Where-Object { $nameSet -contains $_.Name.ToLowerInvariant() }
-}
-
-$targets = $items | Group-Object FullName | ForEach-Object { $_.Group[0] }
 
 Write-Host ""
 Write-Host "Found VHDX files:" -ForegroundColor Green
